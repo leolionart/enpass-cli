@@ -6,8 +6,8 @@ before:
 
 builds:
   - id: linux64
-    main: ./cmd/enpasscli/main.go
-    binary: enpasscli
+    main: ./cmd/enpass-cli
+    binary: enpass-cli
     goos:
       - linux
     goarch:
@@ -18,8 +18,8 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
   - id: linux-arm64
-    main: ./cmd/enpasscli/main.go
-    binary: enpasscli
+    main: ./cmd/enpass-cli
+    binary: enpass-cli
     goos:
       - linux
     goarch:
@@ -30,8 +30,8 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
   - id: darwin
-    main: ./cmd/enpasscli/main.go
-    binary: enpasscli
+    main: ./cmd/enpass-cli
+    binary: enpass-cli
     goos:
       - darwin
     goarch:
@@ -43,8 +43,8 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
   - id: linux-armhf
-    main: ./cmd/enpasscli/main.go
-    binary: enpasscli
+    main: ./cmd/enpass-cli
+    binary: enpass-cli
     goos:
       - linux
     goarch:
@@ -79,7 +79,7 @@ changelog:
 
 release:
   github:
-    owner: hazcod
+    owner: leolionart
     name: enpass-cli
   prerelease: auto
   draft: false

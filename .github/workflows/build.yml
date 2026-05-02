@@ -24,4 +24,4 @@ jobs:
         run: go mod download
       -
         name: Go build
-        run: go build -o /dev/null ./cmd/enpasscli/main.go
+        run: go build -o /dev/null ./cmd/enpass-cli
