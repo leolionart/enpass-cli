@@ -1,4 +1,4 @@
-# Enpass Agent CLI
+# Enpass CLI
 
 A command-line reader for local Enpass vaults, designed for Codex and other
 agentic AI runtimes that need controlled access to credentials already stored in
@@ -26,15 +26,15 @@ Non-goals:
 ## Install
 
 ```shell
-git clone https://github.com/leolionart/enpass-agent-cli.git
-cd enpass-agent-cli
+git clone https://github.com/leolionart/enpass-cli.git
+cd enpass-cli
 make build
 ```
 
 The binary is written to:
 
 ```shell
-./enpass-agent
+./enpass-cli
 ```
 
 ## Vault Path
@@ -42,7 +42,7 @@ The binary is written to:
 Pass the vault path explicitly:
 
 ```shell
-./enpass-agent -vault="/path/to/vault" search github
+./enpass-cli -vault="/path/to/vault" search github
 ```
 
 Or set it once for the process:
@@ -61,14 +61,14 @@ The path should point to the Enpass vault directory that contains:
 Interactive prompt:
 
 ```shell
-./enpass-agent -vault="$ENPASS_VAULT" get github
+./enpass-cli -vault="$ENPASS_VAULT" get github
 ```
 
 Non-interactive automation:
 
 ```shell
 ENPASS_MASTER_PASSWORD="your-master-password" \
-  ./enpass-agent -vault="$ENPASS_VAULT" -nonInteractive get github
+  ./enpass-cli -vault="$ENPASS_VAULT" -nonInteractive get github
 ```
 
 `MASTERPW` is still supported for compatibility, but
@@ -82,7 +82,7 @@ usually visible to local process inspection tools.
 Search matching entries without exposing passwords:
 
 ```shell
-./enpass-agent -vault="$ENPASS_VAULT" search github
+./enpass-cli -vault="$ENPASS_VAULT" search github
 ```
 
 Output:
@@ -94,21 +94,21 @@ Output:
 Get the password for one unique match:
 
 ```shell
-./enpass-agent -vault="$ENPASS_VAULT" get github
+./enpass-cli -vault="$ENPASS_VAULT" get github
 ```
 
 Get another field:
 
 ```shell
-./enpass-agent -vault="$ENPASS_VAULT" -field login get github
-./enpass-agent -vault="$ENPASS_VAULT" -field title get github
-./enpass-agent -vault="$ENPASS_VAULT" -field uuid get github
+./enpass-cli -vault="$ENPASS_VAULT" -field login get github
+./enpass-cli -vault="$ENPASS_VAULT" -field title get github
+./enpass-cli -vault="$ENPASS_VAULT" -field uuid get github
 ```
 
 Get a JSON object containing metadata and password:
 
 ```shell
-./enpass-agent -vault="$ENPASS_VAULT" -json get github
+./enpass-cli -vault="$ENPASS_VAULT" -json get github
 ```
 
 Output:
@@ -120,7 +120,7 @@ Output:
 Use AND matching when multiple filters must all match:
 
 ```shell
-./enpass-agent -vault="$ENPASS_VAULT" -and get github user@example.com
+./enpass-cli -vault="$ENPASS_VAULT" -and get github user@example.com
 ```
 
 ## Legacy Commands
@@ -175,10 +175,10 @@ Smoke test with the bundled fixture vault:
 
 ```shell
 ENPASS_MASTER_PASSWORD="absolutely-No-clue" \
-  ./enpass-agent -vault=./test -nonInteractive search Whatever
+  ./enpass-cli -vault=./test -nonInteractive search Whatever
 
 ENPASS_MASTER_PASSWORD="absolutely-No-clue" \
-  ./enpass-agent -vault=./test -nonInteractive get Whatever
+  ./enpass-cli -vault=./test -nonInteractive get Whatever
 ```
 
 ## License

@@ -13,9 +13,9 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/leolionart/enpass-agent-cli/pkg/clipboard"
-	"github.com/leolionart/enpass-agent-cli/pkg/enpass"
-	"github.com/leolionart/enpass-agent-cli/pkg/unlock"
+	"github.com/leolionart/enpass-cli/pkg/clipboard"
+	"github.com/leolionart/enpass-cli/pkg/enpass"
+	"github.com/leolionart/enpass-cli/pkg/unlock"
 	"github.com/miquella/ask"
 	"github.com/rivo/tview"
 	"github.com/sirupsen/logrus"
@@ -136,7 +136,7 @@ func prompt(logger *logrus.Logger, args *Args, msg string) string {
 }
 
 func printHelp() {
-	fmt.Println("Usage: enpass-agent [flags] <command> [filters...]")
+	fmt.Println("Usage: enpass-cli [flags] <command> [filters...]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  get <filter>      Print one field from one matching entry (default: password)")

@@ -1,4 +1,4 @@
-module github.com/leolionart/enpass-agent-cli
+module github.com/leolionart/enpass-cli
 
 go 1.24.0
 
