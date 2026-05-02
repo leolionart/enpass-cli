@@ -216,7 +216,7 @@ func (v *Vault) Close() {
 // login, incoming server, outgoing server fields). This function deduplicates
 // by UUID, preferring the sensitive field (typically the password).
 func (v *Vault) GetEntries(cardType string, filters []string) ([]Card, error) {
-	if v.db == nil || v.vaultInfo.VaultName == "" {
+	if v.db == nil {
 		return nil, errors.New("vault is not initialized")
 	}
 
