@@ -31,10 +31,22 @@ With Go:
 go install github.com/leolionart/enpass-cli/cmd/enpass-cli@latest
 ```
 
+Install into the Homebrew binary directory on macOS:
+
+```shell
+GOBIN=/opt/homebrew/bin go install github.com/leolionart/enpass-cli/cmd/enpass-cli@latest
+```
+
 Update to the newest public version:
 
 ```shell
-go install github.com/leolionart/enpass-cli/cmd/enpass-cli@latest
+GOBIN=/opt/homebrew/bin go install github.com/leolionart/enpass-cli/cmd/enpass-cli@latest
+```
+
+If you previously installed the upstream Homebrew formula, remove it first:
+
+```shell
+brew uninstall enpass-cli
 ```
 
 Build from source:
