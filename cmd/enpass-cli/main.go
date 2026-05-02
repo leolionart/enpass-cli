@@ -58,14 +58,15 @@ var (
 )
 
 type AgentCredential struct {
-	UUID     string `json:"uuid"`
-	Title    string `json:"title"`
-	Login    string `json:"login"`
-	Password string `json:"password,omitempty"`
-	Category string `json:"category"`
-	Label    string `json:"label"`
-	Type     string `json:"type"`
-	Trashed  bool   `json:"trashed"`
+	UUID     string               `json:"uuid"`
+	Title    string               `json:"title"`
+	Login    string               `json:"login"`
+	Password string               `json:"password,omitempty"`
+	Category string               `json:"category"`
+	Label    string               `json:"label"`
+	Type     string               `json:"type"`
+	Trashed  bool                 `json:"trashed"`
+	Fields   []enpass.PublicField `json:"fields,omitempty"`
 }
 
 type Args struct {
@@ -85,6 +86,7 @@ type Args struct {
 	and              *bool
 	clipboardPrimary *bool
 	field            *string
+	details          *bool
 	// write command flags
 	title    *string
 	login    *string
@@ -108,6 +110,7 @@ func (args *Args) parse() {
 	args.trashed = flag.Bool("trashed", false, "Show trashed items in the 'list' and 'show' command.")
 	args.clipboardPrimary = flag.Bool("clipboardPrimary", false, "Use primary X selection instead of clipboard for the 'copy' command.")
 	args.field = flag.String("field", "password", "Field to print for the 'get' command: password, login, title, uuid, category, label, type.")
+	args.details = flag.Bool("details", false, "Include non-sensitive item fields in the 'search' command.")
 	// write command flags
 	args.title = flag.String("title", "", "Entry title (for create/edit).")
 	args.login = flag.String("login", "", "Username or email (for create/edit).")
@@ -205,7 +208,7 @@ func showEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	outputDataOrLog(logger, data, args)
 }
 
-func toAgentCredential(card *enpass.Card, includePassword bool) (AgentCredential, error) {
+func toAgentCredential(vault *enpass.Vault, card *enpass.Card, includePassword bool, includeDetails bool) (AgentCredential, error) {
 	credential := AgentCredential{
 		UUID:     card.UUID,
 		Title:    card.Title,
@@ -222,6 +225,14 @@ func toAgentCredential(card *enpass.Card, includePassword bool) (AgentCredential
 			return credential, err
 		}
 		credential.Password = decrypted
+	}
+
+	if includeDetails {
+		fields, err := vault.GetPublicFields(card.UUID)
+		if err != nil {
+			return credential, err
+		}
+		credential.Fields = fields
 	}
 
 	return credential, nil
@@ -241,7 +252,7 @@ func searchEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 		if card.IsTrashed() && !*args.trashed {
 			continue
 		}
-		credential, err := toAgentCredential(&card, false)
+		credential, err := toAgentCredential(vault, &card, false, *args.details)
 		if err != nil {
 			logger.WithError(err).Fatal("could not prepare credential")
 		}
@@ -257,7 +268,7 @@ func getEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 		logger.WithError(err).Fatal("could not retrieve unique card")
 	}
 
-	credential, err := toAgentCredential(card, true)
+	credential, err := toAgentCredential(vault, card, true, *args.details)
 	if err != nil {
 		logger.WithError(err).Fatal("could not decrypt card")
 	}

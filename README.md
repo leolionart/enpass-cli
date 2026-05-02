@@ -117,6 +117,14 @@ Output:
 [{"uuid":"...","title":"GitHub","login":"user@example.com","category":"login","label":"password","type":"password","trashed":false}]
 ```
 
+Search also matches title, login, note text, category, field labels, and
+non-sensitive field values such as URLs. Include non-sensitive fields when you
+need to identify the right local service before reading the password:
+
+```shell
+./enpass-cli -vault="$ENPASS_VAULT" -details search 172.16.0
+```
+
 Get the password for one unique match:
 
 ```shell

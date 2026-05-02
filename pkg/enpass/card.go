@@ -81,6 +81,12 @@ type Card struct {
 	itemKey []byte
 }
 
+type PublicField struct {
+	Label string `json:"label"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
 func (c *Card) IsTrashed() bool {
 	return c.Trashed != 0
 }

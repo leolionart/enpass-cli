@@ -81,6 +81,23 @@ func TestVault_CreateEntry(t *testing.T) {
 	if decrypted != "testpassword123" {
 		t.Errorf("expected password 'testpassword123', got %q", decrypted)
 	}
+
+	// URL is stored in an item field, not the title/subtitle columns.
+	cards, err = vault.GetEntries("password", []string{"example.com"})
+	if err != nil {
+		t.Fatalf("GetEntries by URL field failed: %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("expected 1 entry by URL field, got %d", len(cards))
+	}
+
+	fields, err := vault.GetPublicFields(uuid)
+	if err != nil {
+		t.Fatalf("GetPublicFields failed: %v", err)
+	}
+	if len(fields) == 0 {
+		t.Fatal("expected public fields")
+	}
 }
 
 func TestVault_TrashEntry(t *testing.T) {

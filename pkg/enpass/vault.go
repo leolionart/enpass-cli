@@ -60,7 +60,7 @@ func (credentials *VaultCredentials) IsComplete() bool {
 func NewVault(vaultPath string, logLevel logrus.Level) (*Vault, error) {
 	v := Vault{
 		logger:       *logrus.New(),
-		FilterFields: []string{"title", "subtitle"},
+		FilterFields: []string{"title", "subtitle", "note", "category", "label", "value"},
 	}
 	v.logger.SetLevel(logLevel)
 
@@ -294,32 +294,92 @@ func (v *Vault) GetEntry(cardType string, filters []string, unique bool) (*Card,
 	return ret, nil
 }
 
+func (v *Vault) GetPublicFields(uuid string) ([]PublicField, error) {
+	if v.db == nil {
+		return nil, errors.New("vault is not initialized")
+	}
+
+	rows, err := v.db.Query(`
+		SELECT label, type, value
+		FROM itemfield
+		WHERE item_uuid = ?
+		  AND deleted = 0
+		  AND sensitive = 0
+		  AND coalesce(value, '') != ''
+		ORDER BY orde, label, type
+	`, uuid)
+	if err != nil {
+		return nil, errors.Wrap(err, "could not retrieve public fields")
+	}
+	defer rows.Close()
+
+	fields := []PublicField{}
+	for rows.Next() {
+		var field PublicField
+		if err := rows.Scan(&field.Label, &field.Type, &field.Value); err != nil {
+			return nil, errors.Wrap(err, "could not read public field")
+		}
+		fields = append(fields, field)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrap(err, "error iterating public fields")
+	}
+
+	return fields, nil
+}
+
 func (v *Vault) executeEntryQuery(cardType string, filters []string) (*sql.Rows, error) {
 	query := `
-		SELECT uuid, type, created_at, field_updated_at, title,
-		       subtitle, note, trashed, item.deleted, category,
-		       label, value, key, last_used, sensitive, item.icon
+		SELECT item.uuid, password_field.type, item.created_at, item.field_updated_at, item.title,
+		       item.subtitle, item.note, item.trashed, item.deleted, item.category,
+		       password_field.label, password_field.value, item.key, item.last_used, password_field.sensitive, item.icon
 		FROM item
-		INNER JOIN itemfield ON uuid = item_uuid
+		INNER JOIN itemfield password_field ON item.uuid = password_field.item_uuid
 	`
 
 	where := []string{"item.deleted = ?"}
 	values := []interface{}{0}
 
 	if cardType != "" {
-		where = append(where, "type = ?")
+		where = append(where, "password_field.type = ?")
 		values = append(values, cardType)
 	}
 
 	filterWhere := []string{}
 	for _, filter := range filters {
-		fq := "(0"
-		for _, field := range v.FilterFields {
-			fq += " + instr(lower(" + field + "), ?)"
-			values = append(values, strings.ToLower(filter))
+		clauses := []string{}
+		for _, field := range normalizedFilterFields(v.FilterFields) {
+			switch field {
+			case "title", "subtitle", "note", "category":
+				clauses = append(clauses, "instr(lower(coalesce(item."+field+", '')), ?) > 0")
+				values = append(values, strings.ToLower(filter))
+			case "label":
+				clauses = append(clauses, `
+					EXISTS (
+						SELECT 1 FROM itemfield search_field
+						WHERE search_field.item_uuid = item.uuid
+						  AND search_field.deleted = 0
+						  AND instr(lower(coalesce(search_field.label, '')), ?) > 0
+					)
+				`)
+				values = append(values, strings.ToLower(filter))
+			case "value":
+				clauses = append(clauses, `
+					EXISTS (
+						SELECT 1 FROM itemfield search_field
+						WHERE search_field.item_uuid = item.uuid
+						  AND search_field.deleted = 0
+						  AND search_field.sensitive = 0
+						  AND instr(lower(coalesce(search_field.value, '')), ?) > 0
+					)
+				`)
+				values = append(values, strings.ToLower(filter))
+			}
 		}
-		fq += " > 0)"
-		filterWhere = append(filterWhere, fq)
+		if len(clauses) > 0 {
+			filterWhere = append(filterWhere, "("+strings.Join(clauses, " OR ")+")")
+		}
 	}
 
 	if v.FilterAnd {
@@ -331,4 +391,29 @@ func (v *Vault) executeEntryQuery(cardType string, filters []string) (*sql.Rows,
 	query += " WHERE " + strings.Join(where, " AND ")
 	v.logger.Trace("query: ", query)
 	return v.db.Query(query, values...)
+}
+
+func normalizedFilterFields(fields []string) []string {
+	if len(fields) == 0 {
+		return []string{"title", "subtitle", "note", "category", "label", "value"}
+	}
+
+	allowed := map[string]struct{}{
+		"title": {}, "subtitle": {}, "note": {}, "category": {}, "label": {}, "value": {},
+	}
+	seen := map[string]struct{}{}
+	normalized := []string{}
+	for _, field := range fields {
+		field = strings.ToLower(strings.TrimSpace(field))
+		if _, ok := allowed[field]; !ok {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		normalized = append(normalized, field)
+	}
+
+	return normalized
 }
