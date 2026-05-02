@@ -1,7 +1,7 @@
 .idea/
 *.tar.xz
 dist
-enpass-cli
+/enpass-cli
 vendor
 .release-env
 .semrel/

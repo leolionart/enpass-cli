@@ -5,7 +5,7 @@ SYSROOT_DIR     ?= sysroots
 SYSROOT_ARCHIVE ?= sysroots.tar.bz2
 
 build:
-	go build -o enpass-cli ./cmd/enpasscli
+	go build -o enpass-cli ./cmd/enpass-cli
 
 .PHONY: sysroot-pack
 sysroot-pack:

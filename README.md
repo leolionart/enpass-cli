@@ -25,6 +25,20 @@ Non-goals:
 
 ## Install
 
+With Go:
+
+```shell
+go install github.com/leolionart/enpass-cli/cmd/enpass-cli@latest
+```
+
+Update to the newest public version:
+
+```shell
+go install github.com/leolionart/enpass-cli/cmd/enpass-cli@latest
+```
+
+Build from source:
+
 ```shell
 git clone https://github.com/leolionart/enpass-cli.git
 cd enpass-cli
