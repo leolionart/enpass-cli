@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -717,6 +718,19 @@ func isFlagPassed(name string) bool {
 	return found
 }
 
+func buildVersion() string {
+	if version != "" && version != "dev" {
+		return version
+	}
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return version
+	}
+
+	return info.Main.Version
+}
+
 func main() {
 	args := &Args{}
 	args.parse()
@@ -740,7 +754,7 @@ func main() {
 	case cmdVersion:
 		logger.Printf(
 			"%s arch=%s os=%s version=%s",
-			filepath.Base(os.Args[0]), runtime.GOARCH, runtime.GOOS, version,
+			filepath.Base(os.Args[0]), runtime.GOARCH, runtime.GOOS, buildVersion(),
 		)
 		return
 	}
