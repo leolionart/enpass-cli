@@ -1,6 +1,7 @@
 .idea/
 *.tar.xz
 dist
+enpass-agent
 vendor
 .release-env
 .semrel/

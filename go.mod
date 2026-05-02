@@ -1,4 +1,4 @@
-module github.com/hazcod/enpass-cli
+module github.com/leolionart/enpass-agent-cli
 
 go 1.24.0
 

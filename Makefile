@@ -1,11 +1,11 @@
-PACKAGE_NAME          := github.com/hazcod/enpass-cli
+PACKAGE_NAME          := github.com/leolionart/enpass-agent-cli
 GOLANG_CROSS_VERSION  ?= latest
 
 SYSROOT_DIR     ?= sysroots
 SYSROOT_ARCHIVE ?= sysroots.tar.bz2
 
 build:
-	go build -o enpass-cli ./cmd/...
+	go build -o enpass-agent ./cmd/enpasscli
 
 .PHONY: sysroot-pack
 sysroot-pack:

@@ -13,9 +13,9 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/hazcod/enpass-cli/pkg/clipboard"
-	"github.com/hazcod/enpass-cli/pkg/enpass"
-	"github.com/hazcod/enpass-cli/pkg/unlock"
+	"github.com/leolionart/enpass-agent-cli/pkg/clipboard"
+	"github.com/leolionart/enpass-agent-cli/pkg/enpass"
+	"github.com/leolionart/enpass-agent-cli/pkg/unlock"
 	"github.com/miquella/ask"
 	"github.com/rivo/tview"
 	"github.com/sirupsen/logrus"
@@ -28,6 +28,8 @@ const (
 	cmdDryRun  = "dryrun"
 	cmdList    = "list"
 	cmdShow    = "show"
+	cmdSearch  = "search"
+	cmdGet     = "get"
 	cmdCopy    = "copy"
 	cmdPass    = "pass"
 	cmdUi      = "ui"
@@ -49,10 +51,21 @@ var (
 	// set of all commands
 	commands = map[string]struct{}{
 		cmdVersion: {}, cmdHelp: {}, cmdDryRun: {}, cmdList: {},
-		cmdShow: {}, cmdCopy: {}, cmdPass: {}, cmdUi: {},
+		cmdShow: {}, cmdSearch: {}, cmdGet: {}, cmdCopy: {}, cmdPass: {}, cmdUi: {},
 		cmdCreate: {}, cmdEdit: {}, cmdTrash: {}, cmdRestore: {}, cmdDelete: {},
 	}
 )
+
+type AgentCredential struct {
+	UUID     string `json:"uuid"`
+	Title    string `json:"title"`
+	Login    string `json:"login"`
+	Password string `json:"password,omitempty"`
+	Category string `json:"category"`
+	Label    string `json:"label"`
+	Type     string `json:"type"`
+	Trashed  bool   `json:"trashed"`
+}
 
 type Args struct {
 	command string
@@ -70,6 +83,7 @@ type Args struct {
 	trashed          *bool
 	and              *bool
 	clipboardPrimary *bool
+	field            *string
 	// write command flags
 	title    *string
 	login    *string
@@ -81,7 +95,7 @@ type Args struct {
 }
 
 func (args *Args) parse() {
-	args.vaultPath = flag.String("vault", "", "Path to your Enpass vault.")
+	args.vaultPath = flag.String("vault", os.Getenv("ENPASS_VAULT"), "Path to your Enpass vault. Defaults to ENPASS_VAULT.")
 	args.cardType = flag.String("type", "password", "The type of your card. (password, ...)")
 	args.keyFilePath = flag.String("keyfile", "", "Path to your Enpass vault keyfile.")
 	args.logLevelStr = flag.String("log", defaultLogLevel.String(), "The log level from debug (5) to error (1).")
@@ -92,6 +106,7 @@ func (args *Args) parse() {
 	args.sort = flag.Bool("sort", false, "Sort the output by title and username of the 'list' and 'show' command.")
 	args.trashed = flag.Bool("trashed", false, "Show trashed items in the 'list' and 'show' command.")
 	args.clipboardPrimary = flag.Bool("clipboardPrimary", false, "Use primary X selection instead of clipboard for the 'copy' command.")
+	args.field = flag.String("field", "password", "Field to print for the 'get' command: password, login, title, uuid, category, label, type.")
 	// write command flags
 	args.title = flag.String("title", "", "Entry title (for create/edit).")
 	args.login = flag.String("login", "", "Username or email (for create/edit).")
@@ -121,9 +136,11 @@ func prompt(logger *logrus.Logger, args *Args, msg string) string {
 }
 
 func printHelp() {
-	fmt.Println("Usage: enpass-cli [flags] <command> [filters...]")
+	fmt.Println("Usage: enpass-agent [flags] <command> [filters...]")
 	fmt.Println()
 	fmt.Println("Commands:")
+	fmt.Println("  get <filter>      Print one field from one matching entry (default: password)")
+	fmt.Println("  search [filter]   Search entries and output agent-friendly JSON")
 	fmt.Println("  list [filter]     List entries (without passwords)")
 	fmt.Println("  show [filter]     Show entries (with passwords)")
 	fmt.Println("  copy <filter>     Copy password to clipboard")
@@ -187,6 +204,88 @@ func showEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	outputDataOrLog(logger, data, args)
 }
 
+func toAgentCredential(card *enpass.Card, includePassword bool) (AgentCredential, error) {
+	credential := AgentCredential{
+		UUID:     card.UUID,
+		Title:    card.Title,
+		Login:    card.Subtitle,
+		Category: card.Category,
+		Label:    card.Label,
+		Type:     card.Type,
+		Trashed:  card.IsTrashed(),
+	}
+
+	if includePassword {
+		decrypted, err := card.Decrypt()
+		if err != nil {
+			return credential, err
+		}
+		credential.Password = decrypted
+	}
+
+	return credential, nil
+}
+
+func searchEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	cards, err := vault.GetEntries(*args.cardType, args.filters)
+	if err != nil {
+		logger.WithError(err).Fatal("could not retrieve cards")
+	}
+	if *args.sort {
+		sortEntries(cards)
+	}
+
+	credentials := make([]AgentCredential, 0, len(cards))
+	for _, card := range cards {
+		if card.IsTrashed() && !*args.trashed {
+			continue
+		}
+		credential, err := toAgentCredential(&card, false)
+		if err != nil {
+			logger.WithError(err).Fatal("could not prepare credential")
+		}
+		credentials = append(credentials, credential)
+	}
+
+	outputJSON(logger, credentials)
+}
+
+func getEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	card, err := vault.GetEntry(*args.cardType, args.filters, true)
+	if err != nil {
+		logger.WithError(err).Fatal("could not retrieve unique card")
+	}
+
+	credential, err := toAgentCredential(card, true)
+	if err != nil {
+		logger.WithError(err).Fatal("could not decrypt card")
+	}
+
+	if *args.jsonOutput {
+		outputJSON(logger, credential)
+		return
+	}
+
+	switch strings.ToLower(*args.field) {
+	case "password", "pass", "secret":
+		fmt.Println(credential.Password)
+	case "login", "username", "user":
+		fmt.Println(credential.Login)
+	case "title":
+		fmt.Println(credential.Title)
+	case "uuid", "id":
+		fmt.Println(credential.UUID)
+	case "category":
+		fmt.Println(credential.Category)
+	case "label":
+		fmt.Println(credential.Label)
+	case "type":
+		fmt.Println(credential.Type)
+	default:
+		logger.Fatalf("unsupported field %q", *args.field)
+	}
+}
+
 func prepareCardData(cards []enpass.Card, includeDecrypted bool, args *Args) ([]map[string]string, error) {
 	data := make([]map[string]string, 0)
 	for _, card := range cards {
@@ -217,11 +316,7 @@ func prepareCardData(cards []enpass.Card, includeDecrypted bool, args *Args) ([]
 
 func outputDataOrLog(logger *logrus.Logger, data []map[string]string, args *Args) {
 	if *args.jsonOutput {
-		jsonData, jsonErr := json.Marshal(data)
-		if jsonErr != nil {
-			logger.WithError(jsonErr).Fatal("could not marshal JSON data")
-		}
-		fmt.Println(string(jsonData))
+		outputJSON(logger, data)
 	} else {
 		for _, card := range data {
 			logger.Printf(
@@ -233,6 +328,14 @@ func outputDataOrLog(logger *logrus.Logger, data []map[string]string, args *Args
 			)
 		}
 	}
+}
+
+func outputJSON(logger *logrus.Logger, data interface{}) {
+	jsonData, jsonErr := json.Marshal(data)
+	if jsonErr != nil {
+		logger.WithError(jsonErr).Fatal("could not marshal JSON data")
+	}
+	fmt.Println(string(jsonData))
 }
 
 func copyEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
@@ -358,7 +461,7 @@ func ui(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 
 func assembleVaultCredentials(logger *logrus.Logger, args *Args, store *unlock.SecureStore) *enpass.VaultCredentials {
 	credentials := &enpass.VaultCredentials{
-		Password:    os.Getenv("MASTERPW"),
+		Password:    firstNonEmpty(os.Getenv("ENPASS_MASTER_PASSWORD"), os.Getenv("MASTERPW")),
 		KeyfilePath: *args.keyFilePath,
 	}
 
@@ -375,6 +478,15 @@ func assembleVaultCredentials(logger *logrus.Logger, args *Args, store *unlock.S
 	}
 
 	return credentials
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func initializeStore(logger *logrus.Logger, args *Args) *unlock.SecureStore {
@@ -664,8 +776,12 @@ func main() {
 		logger.Debug("dry run complete") // just init vault and store without doing anything
 	case cmdList:
 		listEntries(logger, vault, args)
+	case cmdSearch:
+		searchEntries(logger, vault, args)
 	case cmdShow:
 		showEntries(logger, vault, args)
+	case cmdGet:
+		getEntry(logger, vault, args)
 	case cmdCopy:
 		copyEntry(logger, vault, args)
 	case cmdPass:
