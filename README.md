@@ -82,6 +82,13 @@ The path should point to the Enpass vault directory that contains:
 - `vault.enpassdb`
 - `vault.json`
 
+On macOS, if neither `-vault` nor `ENPASS_VAULT` is set, `enpass-cli`
+automatically checks these default vault directories and uses the first one that
+contains `vault.enpassdb`:
+
+- `~/Library/Containers/in.sinew.Enpass-Desktop/Data/Documents/Vaults/primary`
+- `~/Documents/Enpass/Vaults/primary`
+
 ## Password Input
 
 Interactive prompt:
@@ -99,6 +106,25 @@ ENPASS_MASTER_PASSWORD="your-master-password" \
 
 `MASTERPW` is still supported for compatibility, but
 `ENPASS_MASTER_PASSWORD` is preferred.
+
+You can also retrieve the vault password from a command:
+
+```shell
+./enpass-cli -vault="$ENPASS_VAULT" \
+  -password-command "security find-generic-password -w -s enpass-cli" \
+  -nonInteractive get github
+```
+
+Or set the command in the environment:
+
+```shell
+ENPASS_PASSWORD_COMMAND="security find-generic-password -w -s enpass-cli" \
+  ./enpass-cli -vault="$ENPASS_VAULT" -nonInteractive get github
+```
+
+The command is executed with `sh -c`; stdout is trimmed and used as the vault
+password. `ENPASS_MASTER_PASSWORD` still takes precedence over
+`-password-command` and `ENPASS_PASSWORD_COMMAND`.
 
 Do not pass the vault password as a command argument. Command arguments are
 usually visible to local process inspection tools.

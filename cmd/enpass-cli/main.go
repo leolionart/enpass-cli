@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -75,6 +76,7 @@ type Args struct {
 	filters []string
 	// flags
 	vaultPath        *string
+	passwordCmd      *string
 	cardType         *string
 	keyFilePath      *string
 	logLevelStr      *string
@@ -99,6 +101,7 @@ type Args struct {
 
 func (args *Args) parse() {
 	args.vaultPath = flag.String("vault", os.Getenv("ENPASS_VAULT"), "Path to your Enpass vault. Defaults to ENPASS_VAULT.")
+	args.passwordCmd = flag.String("password-command", "", "Execute command to retrieve vault password. Also controlled by ENPASS_PASSWORD_COMMAND.")
 	args.cardType = flag.String("type", "password", "The type of your card. (password, ...)")
 	args.keyFilePath = flag.String("keyfile", "", "Path to your Enpass vault keyfile.")
 	args.logLevelStr = flag.String("log", defaultLogLevel.String(), "The log level from debug (5) to error (1).")
@@ -477,6 +480,17 @@ func assembleVaultCredentials(logger *logrus.Logger, args *Args, store *unlock.S
 		KeyfilePath: *args.keyFilePath,
 	}
 
+	if credentials.Password == "" {
+		passwordCmd := firstNonEmpty(*args.passwordCmd, os.Getenv("ENPASS_PASSWORD_COMMAND"))
+		password, err := getPasswordFromCommand(passwordCmd, func(name string, arg ...string) ([]byte, error) {
+			return exec.Command(name, arg...).Output()
+		})
+		if err != nil {
+			logger.WithError(err).Fatal("could not retrieve password from command")
+		}
+		credentials.Password = password
+	}
+
 	if !credentials.IsComplete() && store != nil {
 		var err error
 		if credentials.DBKey, err = store.Read(); err != nil {
@@ -490,6 +504,43 @@ func assembleVaultCredentials(logger *logrus.Logger, args *Args, store *unlock.S
 	}
 
 	return credentials
+}
+
+func getPasswordFromCommand(cmdStr string, execCmd func(name string, arg ...string) ([]byte, error)) (string, error) {
+	if cmdStr == "" {
+		return "", nil
+	}
+
+	output, err := execCmd("sh", "-c", cmdStr)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func discoverMacVaultPath(goos string, getHomeDir func() (string, error), exists func(string) bool) string {
+	if goos != "darwin" {
+		return ""
+	}
+
+	homeDir, err := getHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	candidates := []string{
+		filepath.Join(homeDir, "Library/Containers/in.sinew.Enpass-Desktop/Data/Documents/Vaults/primary"),
+		filepath.Join(homeDir, "Documents/Enpass/Vaults/primary"),
+	}
+
+	for _, candidate := range candidates {
+		if exists(filepath.Join(candidate, "vault.enpassdb")) {
+			return candidate
+		}
+	}
+
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {
@@ -768,6 +819,13 @@ func main() {
 			filepath.Base(os.Args[0]), runtime.GOARCH, runtime.GOOS, buildVersion(),
 		)
 		return
+	}
+
+	if *args.vaultPath == "" {
+		*args.vaultPath = discoverMacVaultPath(runtime.GOOS, os.UserHomeDir, func(path string) bool {
+			_, err := os.Stat(path)
+			return err == nil
+		})
 	}
 
 	vault, err := enpass.NewVault(*args.vaultPath, logger.Level)
