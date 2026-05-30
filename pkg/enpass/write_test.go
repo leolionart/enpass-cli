@@ -98,6 +98,94 @@ func TestVault_CreateEntry(t *testing.T) {
 	if len(fields) == 0 {
 		t.Fatal("expected public fields")
 	}
+
+	assertCreatedEntryMetadata(t, vault, uuid)
+}
+
+func assertCreatedEntryMetadata(t *testing.T, vault *Vault, entryUUID string) {
+	t.Helper()
+
+	var metaUpdatedAt, updatedAt int64
+	var template, icon string
+	if err := vault.db.QueryRow(`
+		SELECT meta_updated_at, updated_at, template, icon
+		FROM item
+		WHERE uuid = ?
+	`, entryUUID).Scan(&metaUpdatedAt, &updatedAt, &template, &icon); err != nil {
+		t.Fatalf("could not read created item metadata: %v", err)
+	}
+	if metaUpdatedAt <= 0 {
+		t.Errorf("expected item meta_updated_at to be set, got %d", metaUpdatedAt)
+	}
+	if updatedAt <= 0 {
+		t.Errorf("expected item updated_at to be set, got %d", updatedAt)
+	}
+	if template != "login.default" {
+		t.Errorf("expected template login.default, got %q", template)
+	}
+	if icon == "" {
+		t.Error("expected icon metadata to be set")
+	}
+
+	rows, err := vault.db.Query(`
+		SELECT type, item_field_uid, historical, updated_at, value_updated_at,
+		       orde, wearable, history, hash, algo_version, extra
+		FROM itemfield
+		WHERE item_uuid = ? AND type IN ('password', 'username', 'url')
+	`, entryUUID)
+	if err != nil {
+		t.Fatalf("could not read created item fields: %v", err)
+	}
+	defer rows.Close()
+
+	seen := map[string]bool{}
+	for rows.Next() {
+		var fieldType, history, hash, extra string
+		var fieldUID, historical, fieldUpdatedAt, valueUpdatedAt, order, wearable, algoVersion int64
+		if err := rows.Scan(
+			&fieldType, &fieldUID, &historical, &fieldUpdatedAt, &valueUpdatedAt,
+			&order, &wearable, &history, &hash, &algoVersion, &extra,
+		); err != nil {
+			t.Fatalf("could not scan created item field metadata: %v", err)
+		}
+		seen[fieldType] = true
+		if fieldUID <= 0 {
+			t.Errorf("expected %s item_field_uid to be set, got %d", fieldType, fieldUID)
+		}
+		if historical != 1 {
+			t.Errorf("expected %s historical=1, got %d", fieldType, historical)
+		}
+		if fieldUpdatedAt <= 0 || valueUpdatedAt <= 0 {
+			t.Errorf("expected %s timestamps to be set, got updated_at=%d value_updated_at=%d", fieldType, fieldUpdatedAt, valueUpdatedAt)
+		}
+		if order <= 0 {
+			t.Errorf("expected %s orde to be set, got %d", fieldType, order)
+		}
+		if wearable != 0 {
+			t.Errorf("expected %s wearable=0, got %d", fieldType, wearable)
+		}
+		if history != "" {
+			t.Errorf("expected %s empty history, got %q", fieldType, history)
+		}
+		if hash == "" {
+			t.Errorf("expected %s hash to be set", fieldType)
+		}
+		if algoVersion != 1 {
+			t.Errorf("expected %s algo_version=1, got %d", fieldType, algoVersion)
+		}
+		if extra != "" {
+			t.Errorf("expected %s empty extra, got %q", fieldType, extra)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("created item field rows failed: %v", err)
+	}
+
+	for _, fieldType := range []string{"password", "username", "url"} {
+		if !seen[fieldType] {
+			t.Errorf("expected created %s field", fieldType)
+		}
+	}
 }
 
 func TestVault_TrashEntry(t *testing.T) {

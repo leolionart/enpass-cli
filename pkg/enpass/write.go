@@ -1,6 +1,9 @@
 package enpass
 
 import (
+	"crypto/sha1"
+	"database/sql"
+	"encoding/hex"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,7 +37,7 @@ func (v *Vault) CreateEntry(entry *EntryData) (string, error) {
 	// Set defaults
 	category := entry.Category
 	if category == "" {
-		category = "Login"
+		category = "login"
 	}
 
 	// Start transaction
@@ -58,47 +61,32 @@ func (v *Vault) CreateEntry(entry *EntryData) (string, error) {
 	// Insert into item table (key is stored here, not in itemfield)
 	_, err = tx.Exec(`
 		INSERT INTO item (
-			uuid, created_at, field_updated_at, title, subtitle,
-			note, trashed, deleted, category, icon, last_used, key
-		) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
-	`, entryUUID, now, now, entry.Title, entry.Username,
-		entry.Notes, category, "card_password", now, itemKey)
+			uuid, created_at, meta_updated_at, field_updated_at, title, subtitle,
+			note, trashed, deleted, category, icon, template, last_used, key, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 0, ?, ?)
+	`, entryUUID, now, now, now, entry.Title, entry.Username,
+		entry.Notes, category, defaultLoginIcon, "login.default", itemKey, now)
 	if err != nil {
 		return "", errors.Wrap(err, "could not insert item")
 	}
 
 	// Insert password field (value only, key is in item table)
 	if entry.Password != "" {
-		_, err = tx.Exec(`
-			INSERT INTO itemfield (
-				item_uuid, label, value, deleted, sensitive, type
-			) VALUES (?, ?, ?, 0, 1, ?)
-		`, entryUUID, "", encryptedValue, "password")
-		if err != nil {
+		if err := insertEntryField(tx, entryUUID, "", encryptedValue, entry.Password, 1, "password", 2, "no", 0, now); err != nil {
 			return "", errors.Wrap(err, "could not insert password field")
 		}
 	}
 
 	// Insert username field (not encrypted)
 	if entry.Username != "" {
-		_, err = tx.Exec(`
-			INSERT INTO itemfield (
-				item_uuid, label, value, deleted, sensitive, type
-			) VALUES (?, ?, ?, 0, 0, ?)
-		`, entryUUID, "", entry.Username, "username")
-		if err != nil {
+		if err := insertEntryField(tx, entryUUID, "", entry.Username, entry.Username, 0, "username", 1, "", -1, now); err != nil {
 			return "", errors.Wrap(err, "could not insert username field")
 		}
 	}
 
 	// Insert URL field (not encrypted)
 	if entry.URL != "" {
-		_, err = tx.Exec(`
-			INSERT INTO itemfield (
-				item_uuid, label, value, deleted, sensitive, type
-			) VALUES (?, ?, ?, 0, 0, ?)
-		`, entryUUID, "", entry.URL, "url")
-		if err != nil {
+		if err := insertEntryField(tx, entryUUID, "", entry.URL, entry.URL, 0, "url", 3, "", -1, now); err != nil {
 			return "", errors.Wrap(err, "could not insert URL field")
 		}
 	}
@@ -109,6 +97,40 @@ func (v *Vault) CreateEntry(entry *EntryData) (string, error) {
 
 	v.logger.WithField("uuid", entryUUID).Debug("created entry")
 	return entryUUID, nil
+}
+
+const defaultLoginIcon = `{"fav":"","image":{"file":"misc/login"},"type":1,"uuid":""}`
+
+func insertEntryField(tx *sql.Tx, entryUUID, label, value, hashValue string, sensitive int, fieldType string, order int, initial string, strength int, now int64) error {
+	fieldUID, err := nextItemFieldUID(tx)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO itemfield (
+			item_uuid, item_field_uid, label, value, deleted, sensitive, historical,
+			type, form_id, updated_at, value_updated_at, orde, wearable, history,
+			initial, hash, strength, algo_version, expiry, excluded, pwned_check_time, extra
+		) VALUES (?, ?, ?, ?, 0, ?, 1, ?, '', ?, ?, ?, 0, '', ?, ?, ?, 1, 0, 0, 0, '')
+	`, entryUUID, fieldUID, label, value, sensitive, fieldType, now, now, order, initial, sha1Hex(hashValue), strength)
+	return err
+}
+
+func nextItemFieldUID(tx *sql.Tx) (int64, error) {
+	var fieldUID int64
+	if err := tx.QueryRow("SELECT COALESCE(MAX(item_field_uid), 0) + 1 FROM itemfield").Scan(&fieldUID); err != nil {
+		return 0, errors.Wrap(err, "could not allocate item field uid")
+	}
+	return fieldUID, nil
+}
+
+func sha1Hex(value string) string {
+	if value == "" {
+		return ""
+	}
+	sum := sha1.Sum([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 // UpdateEntry updates an existing entry in the vault
@@ -169,11 +191,7 @@ func (v *Vault) UpdateEntry(entryUUID string, updates *EntryData) error {
 		}
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
-			_, err = tx.Exec(`
-				INSERT INTO itemfield (item_uuid, label, value, deleted, sensitive, type)
-				VALUES (?, ?, ?, 0, 0, ?)
-			`, entryUUID, "", updates.Username, "username")
-			if err != nil {
+			if err := insertEntryField(tx, entryUUID, "", updates.Username, updates.Username, 0, "username", 1, "", -1, now); err != nil {
 				return errors.Wrap(err, "could not insert username field")
 			}
 		}
@@ -201,11 +219,7 @@ func (v *Vault) UpdateEntry(entryUUID string, updates *EntryData) error {
 		}
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
-			_, err = tx.Exec(`
-				INSERT INTO itemfield (item_uuid, label, value, deleted, sensitive, type)
-				VALUES (?, ?, ?, 0, 1, ?)
-			`, entryUUID, "", encryptedValue, "password")
-			if err != nil {
+			if err := insertEntryField(tx, entryUUID, "", encryptedValue, updates.Password, 1, "password", 2, "no", 0, now); err != nil {
 				return errors.Wrap(err, "could not insert password field")
 			}
 		}
@@ -220,11 +234,7 @@ func (v *Vault) UpdateEntry(entryUUID string, updates *EntryData) error {
 		}
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
-			_, err = tx.Exec(`
-				INSERT INTO itemfield (item_uuid, label, value, deleted, sensitive, type)
-				VALUES (?, ?, ?, 0, 0, ?)
-			`, entryUUID, "", updates.URL, "url")
-			if err != nil {
+			if err := insertEntryField(tx, entryUUID, "", updates.URL, updates.URL, 0, "url", 3, "", -1, now); err != nil {
 				return errors.Wrap(err, "could not insert URL field")
 			}
 		}
@@ -327,7 +337,7 @@ func (v *Vault) GetEntryByUUID(entryUUID string) (*Card, error) {
 	row := v.db.QueryRow(`
 		SELECT item.uuid, itemfield.type, item.created_at, item.field_updated_at, item.title,
 		       item.subtitle, item.note, item.trashed, item.deleted, item.category,
-		       itemfield.label, itemfield.value, item.key, item.last_used, itemfield.sensitive, item.icon
+		       itemfield.label, itemfield.value, item.key, item.usage_count, item.last_used, itemfield.sensitive, item.icon
 		FROM item
 		INNER JOIN itemfield ON item.uuid = itemfield.item_uuid
 		WHERE item.uuid = ? AND itemfield.sensitive = 1
@@ -338,7 +348,7 @@ func (v *Vault) GetEntryByUUID(entryUUID string) (*Card, error) {
 	err := row.Scan(
 		&card.UUID, &card.Type, &card.CreatedAt, &card.UpdatedAt, &card.Title,
 		&card.Subtitle, &card.Note, &card.Trashed, &card.Deleted, &card.Category,
-		&card.Label, &card.value, &card.itemKey, &card.LastUsed, &card.Sensitive, &card.Icon,
+		&card.Label, &card.value, &card.itemKey, &card.UsageCount, &card.LastUsed, &card.Sensitive, &card.Icon,
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not retrieve entry")

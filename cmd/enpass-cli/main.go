@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/leolionart/enpass-cli/pkg/clipboard"
@@ -25,21 +26,26 @@ import (
 
 const (
 	// commands
-	cmdVersion = "version"
-	cmdHelp    = "help"
-	cmdDryRun  = "dryrun"
-	cmdList    = "list"
-	cmdShow    = "show"
-	cmdSearch  = "search"
-	cmdGet     = "get"
-	cmdCopy    = "copy"
-	cmdPass    = "pass"
-	cmdUi      = "ui"
-	cmdCreate  = "create"
-	cmdEdit    = "edit"
-	cmdTrash   = "trash"
-	cmdRestore = "restore"
-	cmdDelete  = "delete"
+	cmdVersion         = "version"
+	cmdHelp            = "help"
+	cmdDryRun          = "dryrun"
+	cmdList            = "list"
+	cmdShow            = "show"
+	cmdSearch          = "search"
+	cmdGet             = "get"
+	cmdCopy            = "copy"
+	cmdPass            = "pass"
+	cmdUi              = "ui"
+	cmdCreate          = "create"
+	cmdEdit            = "edit"
+	cmdCategories      = "categories"
+	cmdCategorizeInfra = "categorize-infra"
+	cmdFolders         = "folders"
+	cmdApplyInfraTags  = "apply-infra-tags"
+	cmdApplyOrgTags    = "apply-org-tags"
+	cmdTrash           = "trash"
+	cmdRestore         = "restore"
+	cmdDelete          = "delete"
 
 	// defaults
 	defaultLogLevel        = logrus.InfoLevel
@@ -54,20 +60,77 @@ var (
 	commands = map[string]struct{}{
 		cmdVersion: {}, cmdHelp: {}, cmdDryRun: {}, cmdList: {},
 		cmdShow: {}, cmdSearch: {}, cmdGet: {}, cmdCopy: {}, cmdPass: {}, cmdUi: {},
-		cmdCreate: {}, cmdEdit: {}, cmdTrash: {}, cmdRestore: {}, cmdDelete: {},
+		cmdCreate: {}, cmdEdit: {}, cmdCategories: {}, cmdCategorizeInfra: {}, cmdFolders: {}, cmdApplyInfraTags: {}, cmdApplyOrgTags: {}, cmdTrash: {}, cmdRestore: {}, cmdDelete: {},
 	}
 )
 
+type sortMode string
+
+const (
+	sortNone    sortMode = ""
+	sortTitle   sortMode = "title"
+	sortLogin   sortMode = "login"
+	sortCreated sortMode = "created"
+	sortUpdated sortMode = "updated"
+	sortUsed    sortMode = "used"
+	sortUsage   sortMode = "usage"
+)
+
+type sortFlag struct {
+	mode sortMode
+}
+
+func (s *sortFlag) String() string {
+	return string(s.mode)
+}
+
+func (s *sortFlag) IsBoolFlag() bool {
+	return true
+}
+
+func (s *sortFlag) Set(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "true", "title", "name":
+		s.mode = sortTitle
+	case "false", "none":
+		s.mode = sortNone
+	case "login", "username", "user":
+		s.mode = sortLogin
+	case "created", "created_at", "create":
+		s.mode = sortCreated
+	case "updated", "modified", "changed", "updated_at", "field_updated_at":
+		s.mode = sortUpdated
+	case "used", "last_used", "lastused", "recent":
+		s.mode = sortUsed
+	case "usage", "usage_count", "use_count", "uses", "count":
+		s.mode = sortUsage
+	default:
+		return fmt.Errorf("unsupported sort %q; use title, login, created, updated, used, or usage", value)
+	}
+	return nil
+}
+
+func formatUnixTime(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return time.Unix(value, 0).Format(time.RFC3339)
+}
+
 type AgentCredential struct {
-	UUID     string               `json:"uuid"`
-	Title    string               `json:"title"`
-	Login    string               `json:"login"`
-	Password string               `json:"password,omitempty"`
-	Category string               `json:"category"`
-	Label    string               `json:"label"`
-	Type     string               `json:"type"`
-	Trashed  bool                 `json:"trashed"`
-	Fields   []enpass.PublicField `json:"fields,omitempty"`
+	UUID       string               `json:"uuid"`
+	Title      string               `json:"title"`
+	Login      string               `json:"login"`
+	Password   string               `json:"password,omitempty"`
+	Category   string               `json:"category"`
+	Label      string               `json:"label"`
+	Type       string               `json:"type"`
+	Trashed    bool                 `json:"trashed"`
+	CreatedAt  int64                `json:"created_at"`
+	UpdatedAt  int64                `json:"updated_at"`
+	LastUsed   int64                `json:"last_used"`
+	UsageCount int64                `json:"usage_count"`
+	Fields     []enpass.PublicField `json:"fields,omitempty"`
 }
 
 type Args struct {
@@ -76,32 +139,35 @@ type Args struct {
 	filters []string
 	// flags
 	vaultPath        *string
-	passwordCmd      *string
 	cardType         *string
 	keyFilePath      *string
 	logLevelStr      *string
 	jsonOutput       *bool
 	nonInteractive   *bool
 	pinEnable        *bool
-	sort             *bool
+	sort             sortFlag
 	trashed          *bool
 	and              *bool
 	clipboardPrimary *bool
 	field            *string
 	details          *bool
+	passwordCmd      *string
 	// write command flags
-	title    *string
-	login    *string
-	password *string
-	url      *string
-	notes    *string
-	category *string
-	force    *bool
+	title      *string
+	login      *string
+	password   *string
+	url        *string
+	notes      *string
+	category   *string
+	icon       *string
+	dryRun     *bool
+	apply      *bool
+	fromDryRun *string
+	force      *bool
 }
 
 func (args *Args) parse() {
 	args.vaultPath = flag.String("vault", os.Getenv("ENPASS_VAULT"), "Path to your Enpass vault. Defaults to ENPASS_VAULT.")
-	args.passwordCmd = flag.String("password-command", "", "Execute command to retrieve vault password. Also controlled by ENPASS_PASSWORD_COMMAND.")
 	args.cardType = flag.String("type", "password", "The type of your card. (password, ...)")
 	args.keyFilePath = flag.String("keyfile", "", "Path to your Enpass vault keyfile.")
 	args.logLevelStr = flag.String("log", defaultLogLevel.String(), "The log level from debug (5) to error (1).")
@@ -109,18 +175,23 @@ func (args *Args) parse() {
 	args.nonInteractive = flag.Bool("nonInteractive", false, "Disable prompts and fail instead.")
 	args.pinEnable = flag.Bool("pin", false, "Enable PIN.")
 	args.and = flag.Bool("and", false, "Combines filters with AND instead of default OR.")
-	args.sort = flag.Bool("sort", false, "Sort the output by title and username of the 'list' and 'show' command.")
+	flag.Var(&args.sort, "sort", "Sort list/search/show output. Optional value: title, login, created, updated, used, usage. Metadata sorts default to newest/highest first.")
 	args.trashed = flag.Bool("trashed", false, "Show trashed items in the 'list' and 'show' command.")
 	args.clipboardPrimary = flag.Bool("clipboardPrimary", false, "Use primary X selection instead of clipboard for the 'copy' command.")
-	args.field = flag.String("field", "password", "Field to print for the 'get' command: password, login, title, uuid, category, label, type.")
+	args.field = flag.String("field", "password", "Field to print for the 'get' command: password, login, title, uuid, category, label, type, created_at, updated_at, last_used, usage_count.")
 	args.details = flag.Bool("details", false, "Include non-sensitive item fields in the 'search' command.")
+	args.passwordCmd = flag.String("password-command", "", "Execute command to retrieve vault password. Also controlled by ENPASS_PASSWORD_COMMAND.")
 	// write command flags
 	args.title = flag.String("title", "", "Entry title (for create/edit).")
 	args.login = flag.String("login", "", "Username or email (for create/edit).")
 	args.password = flag.String("password", "", "Password (for create/edit). Prompts if flag present without value.")
 	args.url = flag.String("url", "", "URL (for create/edit).")
 	args.notes = flag.String("notes", "", "Notes (for create/edit).")
-	args.category = flag.String("category", "", "Category (for create/edit).")
+	args.category = flag.String("category", "", "Category UUID or title (for create/edit).")
+	args.icon = flag.String("icon", "", "Category icon (for categories create).")
+	args.dryRun = flag.Bool("dry-run", false, "Preview changes without writing.")
+	args.apply = flag.Bool("apply", false, "Apply a reviewed operation.")
+	args.fromDryRun = flag.String("from-dry-run", "", "Path to a JSON dry-run report to apply.")
 	args.force = flag.Bool("force", false, "Skip confirmation prompts.")
 	flag.Parse()
 	args.command = strings.ToLower(flag.Arg(0))
@@ -155,6 +226,11 @@ func printHelp() {
 	fmt.Println("  ui                Interactive terminal UI")
 	fmt.Println("  create            Create a new entry")
 	fmt.Println("  edit <filter>     Edit an existing entry")
+	fmt.Println("  categories        List available categories")
+	fmt.Println("  categorize-infra  Dry-run or apply Login-to-infra category moves")
+	fmt.Println("  folders           List or create folders used as tags")
+	fmt.Println("  apply-infra-tags  Assign folders/tags from a categorization report")
+	fmt.Println("  apply-org-tags    Assign organization/domain folders/tags")
 	fmt.Println("  trash <filter>    Move entry to trash")
 	fmt.Println("  restore <filter>  Restore entry from trash")
 	fmt.Println("  delete <filter>   Permanently delete entry")
@@ -166,14 +242,52 @@ func printHelp() {
 	flag.Usage()
 }
 
-func sortEntries(cards []enpass.Card) {
-	// Sort by username preserving original order
+func sortEntries(cards []enpass.Card, mode sortMode) {
+	switch mode {
+	case sortNone:
+		return
+	case sortLogin:
+		sort.SliceStable(cards, func(i, j int) bool {
+			left := strings.ToLower(cards[i].Subtitle)
+			right := strings.ToLower(cards[j].Subtitle)
+			if left == right {
+				return strings.ToLower(cards[i].Title) < strings.ToLower(cards[j].Title)
+			}
+			return left < right
+		})
+	case sortCreated:
+		sortNewestFirst(cards, func(card enpass.Card) int64 { return card.CreatedAt })
+	case sortUpdated:
+		sortNewestFirst(cards, func(card enpass.Card) int64 { return card.UpdatedAt })
+	case sortUsed:
+		sortNewestFirst(cards, func(card enpass.Card) int64 { return card.LastUsed })
+	case sortUsage:
+		sortNewestFirst(cards, func(card enpass.Card) int64 { return card.UsageCount })
+	default:
+		// Sort by username preserving original order.
+		sort.SliceStable(cards, func(i, j int) bool {
+			return strings.ToLower(cards[i].Subtitle) < strings.ToLower(cards[j].Subtitle)
+		})
+		// Sort by title, preserving username order.
+		sort.SliceStable(cards, func(i, j int) bool {
+			return strings.ToLower(cards[i].Title) < strings.ToLower(cards[j].Title)
+		})
+	}
+}
+
+func sortNewestFirst(cards []enpass.Card, value func(enpass.Card) int64) {
 	sort.SliceStable(cards, func(i, j int) bool {
-		return strings.ToLower(cards[i].Subtitle) < strings.ToLower(cards[j].Subtitle)
-	})
-	// Sort by title, preserving username order
-	sort.SliceStable(cards, func(i, j int) bool {
-		return strings.ToLower(cards[i].Title) < strings.ToLower(cards[j].Title)
+		left := value(cards[i])
+		right := value(cards[j])
+		if left == right {
+			leftTitle := strings.ToLower(cards[i].Title)
+			rightTitle := strings.ToLower(cards[j].Title)
+			if leftTitle == rightTitle {
+				return strings.ToLower(cards[i].Subtitle) < strings.ToLower(cards[j].Subtitle)
+			}
+			return leftTitle < rightTitle
+		}
+		return left > right
 	})
 }
 
@@ -182,9 +296,7 @@ func listEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	if err != nil {
 		logger.WithError(err).Fatal("could not retrieve cards")
 	}
-	if *args.sort {
-		sortEntries(cards)
-	}
+	sortEntries(cards, args.sort.mode)
 
 	data, err := prepareCardData(cards, false, args)
 	if err != nil {
@@ -199,9 +311,7 @@ func showEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	if err != nil {
 		logger.WithError(err).Fatal("could not retrieve cards")
 	}
-	if *args.sort {
-		sortEntries(cards)
-	}
+	sortEntries(cards, args.sort.mode)
 
 	data, err := prepareCardData(cards, true, args)
 	if err != nil {
@@ -213,13 +323,17 @@ func showEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 
 func toAgentCredential(vault *enpass.Vault, card *enpass.Card, includePassword bool, includeDetails bool) (AgentCredential, error) {
 	credential := AgentCredential{
-		UUID:     card.UUID,
-		Title:    card.Title,
-		Login:    card.Subtitle,
-		Category: card.Category,
-		Label:    card.Label,
-		Type:     card.Type,
-		Trashed:  card.IsTrashed(),
+		UUID:       card.UUID,
+		Title:      card.Title,
+		Login:      card.Subtitle,
+		Category:   card.Category,
+		Label:      card.Label,
+		Type:       card.Type,
+		Trashed:    card.IsTrashed(),
+		CreatedAt:  card.CreatedAt,
+		UpdatedAt:  card.UpdatedAt,
+		LastUsed:   card.LastUsed,
+		UsageCount: card.UsageCount,
 	}
 
 	if includePassword {
@@ -246,9 +360,7 @@ func searchEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	if err != nil {
 		logger.WithError(err).Fatal("could not retrieve cards")
 	}
-	if *args.sort {
-		sortEntries(cards)
-	}
+	sortEntries(cards, args.sort.mode)
 
 	credentials := make([]AgentCredential, 0, len(cards))
 	for _, card := range cards {
@@ -263,6 +375,292 @@ func searchEntries(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	}
 
 	outputJSON(logger, credentials)
+}
+
+func listCategories(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if len(args.filters) > 0 && strings.ToLower(args.filters[0]) == "create" {
+		createCategory(logger, vault, args)
+		return
+	}
+	if len(args.filters) > 0 && strings.ToLower(args.filters[0]) == "delete" {
+		deleteCategory(logger, vault, args)
+		return
+	}
+
+	categories, err := vault.ListCategories()
+	if err != nil {
+		logger.WithError(err).Fatal("could not retrieve categories")
+	}
+
+	if *args.jsonOutput {
+		outputJSON(logger, categories)
+		return
+	}
+
+	for _, category := range categories {
+		if category.Deleted && !*args.trashed {
+			continue
+		}
+		logger.Printf("> title: %s  uuid: %s  icon: %s  builtin: %t", category.Title, category.UUID, category.Icon, category.BuiltIn)
+	}
+}
+
+func createCategory(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	title := strings.TrimSpace(strings.Join(args.filters[1:], " "))
+	if title == "" {
+		title = strings.TrimSpace(*args.title)
+	}
+	if title == "" {
+		logger.Fatal("category title is required")
+	}
+
+	result, err := vault.CreateCategory(title, *args.icon)
+	if err != nil {
+		logger.WithError(err).Fatal("could not create category")
+	}
+
+	if *args.jsonOutput {
+		outputJSON(logger, result)
+		return
+	}
+	if result.Created {
+		logger.Printf("Created category: %s (UUID: %s)", result.Category.Title, result.Category.UUID)
+	} else {
+		logger.Printf("Category already exists: %s (UUID: %s)", result.Category.Title, result.Category.UUID)
+	}
+}
+
+func deleteCategory(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	title := strings.TrimSpace(strings.Join(args.filters[1:], " "))
+	if title == "" {
+		title = strings.TrimSpace(*args.category)
+	}
+	if title == "" {
+		logger.Fatal("category title or UUID is required")
+	}
+
+	category, err := vault.DeleteCategory(title)
+	if err != nil {
+		logger.WithError(err).Fatal("could not delete category")
+	}
+
+	if *args.jsonOutput {
+		outputJSON(logger, category)
+		return
+	}
+	logger.Printf("Deleted category: %s (UUID: %s)", category.Title, category.UUID)
+}
+
+func folders(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if len(args.filters) > 0 && strings.ToLower(args.filters[0]) == "create" {
+		createFolder(logger, vault, args)
+		return
+	}
+	if len(args.filters) > 0 && strings.ToLower(args.filters[0]) == "rename" {
+		renameFolder(logger, vault, args)
+		return
+	}
+	if len(args.filters) > 0 && strings.ToLower(args.filters[0]) == "delete" {
+		deleteFolder(logger, vault, args)
+		return
+	}
+
+	folders, err := vault.ListFolders()
+	if err != nil {
+		logger.WithError(err).Fatal("could not retrieve folders")
+	}
+	if *args.jsonOutput {
+		outputJSON(logger, folders)
+		return
+	}
+	for _, folder := range folders {
+		if folder.Deleted && !*args.trashed {
+			continue
+		}
+		logger.Printf("> title: %s  uuid: %s  parent: %s", folder.Title, folder.UUID, folder.ParentUUID)
+	}
+}
+
+func renameFolder(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if len(args.filters) < 3 {
+		logger.Fatal("usage: folders rename <folder-uuid> <new-title>")
+	}
+	folder, err := vault.RenameFolder(args.filters[1], strings.Join(args.filters[2:], " "))
+	if err != nil {
+		logger.WithError(err).Fatal("could not rename folder")
+	}
+	if *args.jsonOutput {
+		outputJSON(logger, folder)
+		return
+	}
+	logger.Printf("Renamed folder: %s (UUID: %s)", folder.Title, folder.UUID)
+}
+
+func deleteFolder(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if len(args.filters) < 2 {
+		logger.Fatal("usage: folders delete <folder-title-or-uuid>")
+	}
+	folder, err := vault.DeleteFolder(strings.Join(args.filters[1:], " "))
+	if err != nil {
+		logger.WithError(err).Fatal("could not delete folder")
+	}
+	if *args.jsonOutput {
+		outputJSON(logger, folder)
+		return
+	}
+	logger.Printf("Deleted folder/tag: %s (UUID: %s)", folder.Title, folder.UUID)
+}
+
+func createFolder(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	title := strings.TrimSpace(strings.Join(args.filters[1:], " "))
+	if title == "" {
+		title = strings.TrimSpace(*args.title)
+	}
+	if title == "" {
+		logger.Fatal("folder title is required")
+	}
+
+	result, err := vault.CreateFolder(title, *args.icon, "")
+	if err != nil {
+		logger.WithError(err).Fatal("could not create folder")
+	}
+	if *args.jsonOutput {
+		outputJSON(logger, result)
+		return
+	}
+	if result.Created {
+		logger.Printf("Created folder: %s (UUID: %s)", result.Folder.Title, result.Folder.UUID)
+	} else {
+		logger.Printf("Folder already exists: %s (UUID: %s)", result.Folder.Title, result.Folder.UUID)
+	}
+}
+
+func applyInfraTags(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if strings.TrimSpace(*args.fromDryRun) == "" {
+		logger.Fatal("-from-dry-run is required")
+	}
+
+	report, err := enpass.LoadInfraCategorizationReport(*args.fromDryRun)
+	if err != nil {
+		logger.WithError(err).Fatal("could not load dry-run report")
+	}
+
+	backupPath, err := backupVaultDirectory(*args.vaultPath)
+	if err != nil {
+		logger.WithError(err).Fatal("could not backup vault before assigning tags")
+	}
+
+	result, err := vault.ApplyInfraTagsFromReport(report)
+	if err != nil {
+		logger.WithError(err).WithField("backup", backupPath).Fatal("could not assign tags")
+	}
+	result.BackupPath = backupPath
+
+	if *args.jsonOutput {
+		outputJSON(logger, result)
+		return
+	}
+	logger.Printf("Backup: %s", result.BackupPath)
+	for _, folder := range result.FoldersCreated {
+		logger.Printf("Created folder/tag: %s (UUID: %s)", folder.Title, folder.UUID)
+	}
+	logger.Printf("Assigned %d folder/tag memberships", len(result.Assigned))
+}
+
+func applyOrgTags(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	backupPath, err := backupVaultDirectory(*args.vaultPath)
+	if err != nil {
+		logger.WithError(err).Fatal("could not backup vault before assigning org tags")
+	}
+	rules, foldersCreated, assignments, err := vault.ApplyDefaultOrgTags()
+	if err != nil {
+		logger.WithError(err).WithField("backup", backupPath).Fatal("could not assign org tags")
+	}
+	result := map[string]interface{}{
+		"backup_path":     backupPath,
+		"rules":           rules,
+		"folders_created": foldersCreated,
+		"assigned":        assignments,
+	}
+	if *args.jsonOutput {
+		outputJSON(logger, result)
+		return
+	}
+	logger.Printf("Backup: %s", backupPath)
+	for _, rule := range rules {
+		if rule.Assigned > 0 {
+			logger.Printf("Assigned tag %s to %d entries", rule.Tag, rule.Assigned)
+		}
+	}
+	logger.Printf("Assigned %d organization/domain tag memberships", len(assignments))
+}
+
+func categorizeInfra(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if *args.apply {
+		applyInfraCategorization(logger, vault, args)
+		return
+	}
+
+	report, err := vault.BuildInfraCategorizationReport()
+	if err != nil {
+		logger.WithError(err).Fatal("could not build infra categorization report")
+	}
+
+	if *args.jsonOutput || *args.dryRun {
+		outputJSON(logger, report)
+		return
+	}
+
+	outputInfraReport(logger, report)
+}
+
+func applyInfraCategorization(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	if strings.TrimSpace(*args.fromDryRun) == "" {
+		logger.Fatal("-from-dry-run is required with -apply")
+	}
+
+	report, err := enpass.LoadInfraCategorizationReport(*args.fromDryRun)
+	if err != nil {
+		logger.WithError(err).Fatal("could not load dry-run report")
+	}
+
+	backupPath, err := backupVaultDirectory(*args.vaultPath)
+	if err != nil {
+		logger.WithError(err).Fatal("could not backup vault before applying")
+	}
+
+	result, err := vault.ApplyInfraCategorizationReport(report)
+	if err != nil {
+		logger.WithError(err).WithField("backup", backupPath).Fatal("could not apply infra categorization")
+	}
+	result.BackupPath = backupPath
+
+	if *args.jsonOutput {
+		outputJSON(logger, result)
+		return
+	}
+	logger.Printf("Backup: %s", result.BackupPath)
+	for _, category := range result.CategoriesCreated {
+		logger.Printf("Created category: %s (UUID: %s)", category.Title, category.UUID)
+	}
+	for _, move := range result.Moved {
+		logger.Printf("Moved: %s  %s -> %s", move.Title, move.FromCategory, move.ToCategory)
+	}
+	logger.Printf("Moved %d entries", len(result.Moved))
+}
+
+func outputInfraReport(logger *logrus.Logger, report enpass.InfraCategorizationReport) {
+	logger.Printf("Infra categorization dry-run: %d candidate entries", len(report.Items))
+	for _, category := range report.Categories {
+		status := "missing"
+		if category.Exists {
+			status = "exists"
+		}
+		logger.Printf("Category: %s (%s) uuid=%s", category.Title, status, category.UUID)
+	}
+	for _, item := range report.Items {
+		logger.Printf("> %s  %s -> %s  reason=%s", item.Title, item.CurrentCategory, item.TargetCategory, item.Reason)
+	}
 }
 
 func getEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
@@ -296,6 +694,14 @@ func getEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 		fmt.Println(credential.Label)
 	case "type":
 		fmt.Println(credential.Type)
+	case "created", "created_at":
+		fmt.Println(credential.CreatedAt)
+	case "updated", "modified", "updated_at":
+		fmt.Println(credential.UpdatedAt)
+	case "last_used", "used":
+		fmt.Println(credential.LastUsed)
+	case "usage", "usage_count":
+		fmt.Println(credential.UsageCount)
 	default:
 		logger.Fatalf("unsupported field %q", *args.field)
 	}
@@ -309,11 +715,18 @@ func prepareCardData(cards []enpass.Card, includeDecrypted bool, args *Args) ([]
 		}
 
 		cardMap := map[string]string{
-			"title":    card.Title,
-			"login":    card.Subtitle,
-			"category": card.Category,
-			"label":    card.Label,
-			"type":     card.Type,
+			"title":          card.Title,
+			"login":          card.Subtitle,
+			"category":       card.Category,
+			"label":          card.Label,
+			"type":           card.Type,
+			"created_at":     strconv.FormatInt(card.CreatedAt, 10),
+			"created_time":   formatUnixTime(card.CreatedAt),
+			"updated_at":     strconv.FormatInt(card.UpdatedAt, 10),
+			"updated_time":   formatUnixTime(card.UpdatedAt),
+			"last_used":      strconv.FormatInt(card.LastUsed, 10),
+			"last_used_time": formatUnixTime(card.LastUsed),
+			"usage_count":    strconv.FormatInt(card.UsageCount, 10),
 		}
 
 		if includeDecrypted {
@@ -335,11 +748,14 @@ func outputDataOrLog(logger *logrus.Logger, data []map[string]string, args *Args
 	} else {
 		for _, card := range data {
 			logger.Printf(
-				"> title: %s  login: %s  cat.: %s  label: %s",
+				"> title: %s  login: %s  cat.: %s  label: %s  updated: %s  last_used: %s  usage: %s",
 				card["title"],
 				card["login"],
 				card["category"],
 				card["label"],
+				card["updated_time"],
+				card["last_used_time"],
+				card["usage_count"],
 			)
 		}
 	}
@@ -392,9 +808,7 @@ func ui(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 	if err != nil {
 		logger.WithError(err).Fatal("could not retrieve cards")
 	}
-	if *args.sort {
-		sortEntries(cards)
-	}
+	sortEntries(cards, args.sort.mode)
 
 	app := tview.NewApplication()
 	flex := tview.NewFlex().SetDirection(tview.FlexRow)
@@ -481,14 +895,20 @@ func assembleVaultCredentials(logger *logrus.Logger, args *Args, store *unlock.S
 	}
 
 	if credentials.Password == "" {
-		passwordCmd := firstNonEmpty(*args.passwordCmd, os.Getenv("ENPASS_PASSWORD_COMMAND"))
-		password, err := getPasswordFromCommand(passwordCmd, func(name string, arg ...string) ([]byte, error) {
-			return exec.Command(name, arg...).Output()
-		})
-		if err != nil {
-			logger.WithError(err).Fatal("could not retrieve password from command")
+		passwordCmd := *args.passwordCmd
+		if passwordCmd == "" {
+			passwordCmd = os.Getenv("ENPASS_PASSWORD_COMMAND")
 		}
-		credentials.Password = password
+		if passwordCmd != "" {
+			logger.Debugf("executing password command: %s", passwordCmd)
+			pass, err := getPasswordFromCommand(passwordCmd, func(name string, arg ...string) ([]byte, error) {
+				return exec.Command(name, arg...).Output()
+			})
+			if err != nil {
+				logger.WithError(err).Fatalf("failed to execute password command: %q", passwordCmd)
+			}
+			credentials.Password = pass
+		}
 	}
 
 	if !credentials.IsComplete() && store != nil {
@@ -510,36 +930,31 @@ func getPasswordFromCommand(cmdStr string, execCmd func(name string, arg ...stri
 	if cmdStr == "" {
 		return "", nil
 	}
-
-	output, err := execCmd("sh", "-c", cmdStr)
+	out, err := execCmd("sh", "-c", cmdStr)
 	if err != nil {
 		return "", err
 	}
-
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 func discoverMacVaultPath(goos string, getHomeDir func() (string, error), exists func(string) bool) string {
 	if goos != "darwin" {
 		return ""
 	}
-
 	homeDir, err := getHomeDir()
 	if err != nil {
 		return ""
 	}
-
 	candidates := []string{
 		filepath.Join(homeDir, "Library/Containers/in.sinew.Enpass-Desktop/Data/Documents/Vaults/primary"),
 		filepath.Join(homeDir, "Documents/Enpass/Vaults/primary"),
 	}
-
 	for _, candidate := range candidates {
-		if exists(filepath.Join(candidate, "vault.enpassdb")) {
+		dbPath := filepath.Join(candidate, "vault.enpassdb")
+		if exists(dbPath) {
 			return candidate
 		}
 	}
-
 	return ""
 }
 
@@ -582,13 +997,18 @@ func initializeStore(logger *logrus.Logger, args *Args) *unlock.SecureStore {
 }
 
 func createEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
+	category, err := vault.ResolveCategory(*args.category)
+	if err != nil {
+		logger.WithError(err).Fatal("could not resolve category")
+	}
+
 	entry := &enpass.EntryData{
 		Title:    *args.title,
 		Username: *args.login,
 		Password: *args.password,
 		URL:      *args.url,
 		Notes:    *args.notes,
-		Category: *args.category,
+		Category: category,
 	}
 
 	// Prompt for required fields if not provided
@@ -618,12 +1038,21 @@ func editEntry(logger *logrus.Logger, vault *enpass.Vault, args *Args) {
 		logger.WithError(err).Fatal("could not find unique entry to edit")
 	}
 
+	category := ""
+	if strings.TrimSpace(*args.category) != "" {
+		var err error
+		category, err = vault.ResolveCategory(*args.category)
+		if err != nil {
+			logger.WithError(err).Fatal("could not resolve category")
+		}
+	}
+
 	updates := &enpass.EntryData{
 		Title:    *args.title,
 		Username: *args.login,
 		URL:      *args.url,
 		Notes:    *args.notes,
-		Category: *args.category,
+		Category: category,
 	}
 
 	// Handle password - prompt if flag was passed but empty
@@ -770,6 +1199,43 @@ func confirm(logger *logrus.Logger, args *Args, msg string) bool {
 	return strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
 }
 
+func backupVaultDirectory(vaultPath string) (string, error) {
+	source, err := filepath.EvalSymlinks(vaultPath)
+	if err != nil {
+		source = vaultPath
+	}
+	backupPath := fmt.Sprintf("%s.codex-backup-%s", source, time.Now().Format("20060102-150405"))
+	if err := copyDirectory(source, backupPath); err != nil {
+		return "", err
+	}
+	return backupPath, nil
+}
+
+func copyDirectory(source string, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
+}
+
 func isFlagPassed(name string) bool {
 	found := false
 	flag.Visit(func(f *flag.Flag) {
@@ -822,10 +1288,13 @@ func main() {
 	}
 
 	if *args.vaultPath == "" {
-		*args.vaultPath = discoverMacVaultPath(runtime.GOOS, os.UserHomeDir, func(path string) bool {
-			_, err := os.Stat(path)
+		if discovered := discoverMacVaultPath(runtime.GOOS, os.UserHomeDir, func(p string) bool {
+			_, err := os.Stat(p)
 			return err == nil
-		})
+		}); discovered != "" {
+			*args.vaultPath = discovered
+			logger.Debugf("automatically discovered macOS Enpass vault at: %s", discovered)
+		}
 	}
 
 	vault, err := enpass.NewVault(*args.vaultPath, logger.Level)
@@ -875,6 +1344,16 @@ func main() {
 		createEntry(logger, vault, args)
 	case cmdEdit:
 		editEntry(logger, vault, args)
+	case cmdCategories:
+		listCategories(logger, vault, args)
+	case cmdCategorizeInfra:
+		categorizeInfra(logger, vault, args)
+	case cmdFolders:
+		folders(logger, vault, args)
+	case cmdApplyInfraTags:
+		applyInfraTags(logger, vault, args)
+	case cmdApplyOrgTags:
+		applyOrgTags(logger, vault, args)
 	case cmdTrash:
 		trashEntry(logger, vault, args)
 	case cmdRestore:

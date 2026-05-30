@@ -236,7 +236,7 @@ func (v *Vault) GetEntries(cardType string, filters []string) ([]Card, error) {
 		if err := rows.Scan(
 			&card.UUID, &card.Type, &card.CreatedAt, &card.UpdatedAt, &card.Title,
 			&card.Subtitle, &card.Note, &card.Trashed, &card.Deleted, &card.Category,
-			&card.Label, &card.value, &card.itemKey, &card.LastUsed, &card.Sensitive, &card.Icon,
+			&card.Label, &card.value, &card.itemKey, &card.UsageCount, &card.LastUsed, &card.Sensitive, &card.Icon,
 		); err != nil {
 			return nil, errors.Wrap(err, "could not read card from database")
 		}
@@ -333,7 +333,7 @@ func (v *Vault) executeEntryQuery(cardType string, filters []string) (*sql.Rows,
 	query := `
 		SELECT item.uuid, password_field.type, item.created_at, item.field_updated_at, item.title,
 		       item.subtitle, item.note, item.trashed, item.deleted, item.category,
-		       password_field.label, password_field.value, item.key, item.last_used, password_field.sensitive, item.icon
+		       password_field.label, password_field.value, item.key, item.usage_count, item.last_used, password_field.sensitive, item.icon
 		FROM item
 		INNER JOIN itemfield password_field ON item.uuid = password_field.item_uuid
 	`

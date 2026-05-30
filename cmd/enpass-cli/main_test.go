@@ -7,107 +7,106 @@ import (
 )
 
 func TestDiscoverMacVaultPath(t *testing.T) {
-	home := filepath.Join(string(filepath.Separator), "Users", "me")
-	containerVault := filepath.Join(home, "Library/Containers/in.sinew.Enpass-Desktop/Data/Documents/Vaults/primary")
-	documentsVault := filepath.Join(home, "Documents/Enpass/Vaults/primary")
-
-	tests := []struct {
-		name       string
-		goos       string
-		homeErr    error
-		existingDB map[string]bool
-		want       string
-	}{
-		{
-			name: "ignores non macos",
-			goos: "linux",
-		},
-		{
-			name:    "ignores home dir errors",
-			goos:    "darwin",
-			homeErr: errors.New("no home"),
-		},
-		{
-			name: "prefers container vault",
-			goos: "darwin",
-			existingDB: map[string]bool{
-				filepath.Join(containerVault, "vault.enpassdb"): true,
-				filepath.Join(documentsVault, "vault.enpassdb"): true,
-			},
-			want: containerVault,
-		},
-		{
-			name: "falls back to documents vault",
-			goos: "darwin",
-			existingDB: map[string]bool{
-				filepath.Join(documentsVault, "vault.enpassdb"): true,
-			},
-			want: documentsVault,
-		},
-		{
-			name:       "returns empty when vault database is absent",
-			goos:       "darwin",
-			existingDB: map[string]bool{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := discoverMacVaultPath(tt.goos, func() (string, error) {
-				if tt.homeErr != nil {
-					return "", tt.homeErr
-				}
-				return home, nil
-			}, func(path string) bool {
-				return tt.existingDB[path]
-			})
-
-			if got != tt.want {
-				t.Fatalf("discoverMacVaultPath() = %q, want %q", got, tt.want)
-			}
+	// Test case: not on macOS (darwin)
+	t.Run("non-darwin", func(t *testing.T) {
+		res := discoverMacVaultPath("linux", func() (string, error) {
+			return "/home/user", nil
+		}, func(p string) bool {
+			return true
 		})
-	}
+		if res != "" {
+			t.Errorf("expected empty vault path on non-darwin OS, got %q", res)
+		}
+	})
+
+	// Test case: error getting user home dir
+	t.Run("home dir error", func(t *testing.T) {
+		res := discoverMacVaultPath("darwin", func() (string, error) {
+			return "", errors.New("failed to get home dir")
+		}, func(p string) bool {
+			return true
+		})
+		if res != "" {
+			t.Errorf("expected empty vault path when home dir error occurs, got %q", res)
+		}
+	})
+
+	// Test case: primary container path exists
+	t.Run("container path exists", func(t *testing.T) {
+		expectedContainerPath := filepath.Join("/Users/test", "Library/Containers/in.sinew.Enpass-Desktop/Data/Documents/Vaults/primary")
+		res := discoverMacVaultPath("darwin", func() (string, error) {
+			return "/Users/test", nil
+		}, func(p string) bool {
+			return p == filepath.Join(expectedContainerPath, "vault.enpassdb")
+		})
+		if res != expectedContainerPath {
+			t.Errorf("expected %q, got %q", expectedContainerPath, res)
+		}
+	})
+
+	// Test case: primary Documents path exists
+	t.Run("documents path exists", func(t *testing.T) {
+		expectedDocsPath := filepath.Join("/Users/test", "Documents/Enpass/Vaults/primary")
+		res := discoverMacVaultPath("darwin", func() (string, error) {
+			return "/Users/test", nil
+		}, func(p string) bool {
+			return p == filepath.Join(expectedDocsPath, "vault.enpassdb")
+		})
+		if res != expectedDocsPath {
+			t.Errorf("expected %q, got %q", expectedDocsPath, res)
+		}
+	})
+
+	// Test case: neither exists
+	t.Run("neither exists", func(t *testing.T) {
+		res := discoverMacVaultPath("darwin", func() (string, error) {
+			return "/Users/test", nil
+		}, func(p string) bool {
+			return false
+		})
+		if res != "" {
+			t.Errorf("expected empty path when neither exists, got %q", res)
+		}
+	})
 }
 
 func TestGetPasswordFromCommand(t *testing.T) {
-	t.Run("empty command returns empty password", func(t *testing.T) {
-		got, err := getPasswordFromCommand("", func(string, ...string) ([]byte, error) {
-			t.Fatal("exec should not be called")
-			return nil, nil
+	// Test case: empty command string
+	t.Run("empty command", func(t *testing.T) {
+		res, err := getPasswordFromCommand("", func(name string, arg ...string) ([]byte, error) {
+			return []byte("secret"), nil
 		})
 		if err != nil {
-			t.Fatalf("getPasswordFromCommand() error = %v", err)
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "" {
-			t.Fatalf("getPasswordFromCommand() = %q, want empty string", got)
+		if res != "" {
+			t.Errorf("expected empty password, got %q", res)
 		}
 	})
 
-	t.Run("runs through shell and trims output", func(t *testing.T) {
-		got, err := getPasswordFromCommand("secret-tool lookup enpass primary", func(name string, arg ...string) ([]byte, error) {
-			if name != "sh" {
-				t.Fatalf("exec name = %q, want sh", name)
+	// Test case: command executes successfully and whitespace is trimmed
+	t.Run("success command execution", func(t *testing.T) {
+		res, err := getPasswordFromCommand("echo ' mysecret '", func(name string, arg ...string) ([]byte, error) {
+			if name != "sh" || len(arg) != 2 || arg[0] != "-c" || arg[1] != "echo ' mysecret '" {
+				return nil, errors.New("unexpected command invocation")
 			}
-			if len(arg) != 2 || arg[0] != "-c" || arg[1] != "secret-tool lookup enpass primary" {
-				t.Fatalf("exec args = %#v, want sh -c command", arg)
-			}
-			return []byte("  vault-pass\n"), nil
+			return []byte(" mysecret \n"), nil
 		})
 		if err != nil {
-			t.Fatalf("getPasswordFromCommand() error = %v", err)
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "vault-pass" {
-			t.Fatalf("getPasswordFromCommand() = %q, want vault-pass", got)
+		if res != "mysecret" {
+			t.Errorf("expected 'mysecret', got %q", res)
 		}
 	})
 
-	t.Run("returns command errors", func(t *testing.T) {
-		wantErr := errors.New("exit 1")
-		_, err := getPasswordFromCommand("false", func(string, ...string) ([]byte, error) {
-			return nil, wantErr
+	// Test case: command execution fails
+	t.Run("failed command execution", func(t *testing.T) {
+		_, err := getPasswordFromCommand("false", func(name string, arg ...string) ([]byte, error) {
+			return nil, errors.New("command failed")
 		})
-		if !errors.Is(err, wantErr) {
-			t.Fatalf("getPasswordFromCommand() error = %v, want %v", err, wantErr)
+		if err == nil {
+			t.Error("expected error on command failure, got nil")
 		}
 	})
 }

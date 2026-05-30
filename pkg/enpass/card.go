@@ -60,21 +60,22 @@ import (
 
 type Card struct {
 	// plaintext
-	UUID      string
-	CreatedAt int64
-	Type      string
-	UpdatedAt int64
-	Title     string
-	Subtitle  string
-	Note      string
-	Trashed   int64
-	Deleted   int64
-	Category  string
-	Label     string
-	LastUsed  int64
-	Sensitive bool
-	Icon      string
-	RawValue  string
+	UUID       string
+	CreatedAt  int64
+	Type       string
+	UpdatedAt  int64
+	Title      string
+	Subtitle   string
+	Note       string
+	Trashed    int64
+	Deleted    int64
+	Category   string
+	Label      string
+	UsageCount int64
+	LastUsed   int64
+	Sensitive  bool
+	Icon       string
+	RawValue   string
 
 	// encrypted
 	value   string
